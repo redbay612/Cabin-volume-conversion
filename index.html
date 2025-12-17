@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>專業倉儲材積規劃系統 (印章複製版)</title>
+    <title>專業倉儲材積規劃系統 (可編輯版)</title>
     <!-- 引入 Tesseract.js 用於文字辨識 -->
     <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
     <style>
@@ -24,9 +24,15 @@
         
         button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95rem; font-weight: bold; transition: 0.2s; }
         .btn-primary { background-color: #3498db; color: white; }
+        .btn-primary:hover { background-color: #2980b9; }
         .btn-success { background-color: #27ae60; color: white; }
+        .btn-success:hover { background-color: #219150; }
         .btn-danger { background-color: #e74c3c; color: white; }
+        .btn-danger:hover { background-color: #c0392b; }
         .btn-warning { background-color: #f39c12; color: white; }
+        .btn-edit { background-color: #34495e; color: white; } /* 新增編輯按鈕樣式 */
+        .btn-edit:hover { background-color: #2c3e50; }
+
         .btn-clone-active { background-color: #8e44ad; color: white; animation: pulse 1.5s infinite; }
         
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(142, 68, 173, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(142, 68, 173, 0); } 100% { box-shadow: 0 0 0 0 rgba(142, 68, 173, 0); } }
@@ -47,7 +53,6 @@
             border: 2px solid #bdc3c7; background: #fff;
             position: relative; overflow: auto;
             border-radius: 8px;
-            /* 格線背景 */
             background-image: linear-gradient(#f0f0f0 1px, transparent 1px), linear-gradient(90deg, #f0f0f0 1px, transparent 1px);
             background-size: 20px 20px;
         }
@@ -60,15 +65,20 @@
             flex: 1; background: white; padding: 0; border-radius: 8px; 
             box-shadow: 0 0 10px rgba(0,0,0,0.05); display: flex; flex-direction: column;
             overflow: hidden;
+            min-width: 320px; /* 確保有足夠寬度顯示按鈕 */
         }
         .data-header { padding: 15px; background: #34495e; color: white; font-weight: bold; }
         .table-container { flex: 1; overflow-y: auto; }
         
         table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; vertical-align: middle; }
         th { background: #ecf0f1; position: sticky; top: 0; z-index: 2; color: #2c3e50; }
-        tr:hover { background: #f9f9f9; cursor: pointer; }
+        tr:hover { background: #f9f9f9; cursor: pointer; transition: background 0.2s; }
         .total-row { background: #d5f5e3; font-weight: bold; color: #27ae60; font-size: 1.1rem; }
+        
+        /* 操作按鈕區塊 */
+        .action-cell { display: flex; gap: 5px; justify-content: flex-end; }
+        .action-cell button { padding: 4px 8px; font-size: 0.8rem; }
 
         /* 彈窗樣式 */
         #input-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
@@ -101,13 +111,12 @@
             <div class="mode-option" id="mode-ocr" onclick="setMode('ocr')">📐 OCR 抓取尺寸</div>
         </div>
 
-        <!-- 複製模式的顯示區域 -->
         <div id="clone-status" style="display:none; align-items: center; gap: 10px; background: #f3e5f5; padding: 5px 10px; border-radius: 4px; border: 1px solid #9c27b0;">
             <span style="color:#8e44ad; font-weight:bold;">📋 印章複製中...</span>
             <button class="btn-danger" style="padding:4px 8px; font-size:0.8rem;" onclick="stopCloneMode()">結束複製</button>
         </div>
 
-        <div style="flex:1;"></div> <!-- 佔位符，把後面按鈕推到右邊 -->
+        <div style="flex:1;"></div>
 
         <button class="btn-success" onclick="exportImage()">💾 存圖</button>
         <button class="btn-success" onclick="exportCSV()">📊 存表</button>
@@ -125,10 +134,10 @@
                 <table id="dataTable">
                     <thead>
                         <tr>
-                            <th style="width:30%">編號</th>
+                            <th style="width:25%">編號</th>
                             <th>尺寸 (cm)</th>
-                            <th style="width:20%">材積</th>
-                            <th style="width:10%"></th>
+                            <th style="width:15%">材積</th>
+                            <th style="width:25%; text-align:right;">操作</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody"></tbody>
@@ -147,7 +156,7 @@
     <!-- 編輯/輸入 彈窗 -->
     <div id="input-modal">
         <div class="modal-content">
-            <h3 style="margin-top:0; color:#2c3e50;">倉位設定</h3>
+            <h3 style="margin-top:0; color:#2c3e50;" id="modal-title">倉位設定</h3>
             <div class="form-group" style="margin-bottom:15px;">
                 <label>編號名稱 (自動遞增):</label>
                 <input type="text" id="dim-name" placeholder="例如: A-01">
@@ -173,8 +182,12 @@
             </div>
 
             <div class="modal-footer">
+                <!-- 刪除按鈕 (編輯模式才顯示) -->
                 <button class="btn-danger" id="btn-delete" onclick="deleteMarker()">刪除</button>
+                
+                <!-- 複製按鈕 -->
                 <button class="btn-primary" id="btn-start-clone" style="background-color: #8e44ad;" onclick="startCloneModeFromModal()">📋 設為複製來源</button>
+                
                 <div style="flex:1;"></div>
                 <button class="btn-warning" onclick="closeModal()">取消</button>
                 <button class="btn-success" onclick="saveMarker()">儲存</button>
@@ -197,33 +210,23 @@
         let markers = []; 
         let isImageLoaded = false;
         
-        // 狀態變數
-        let currentMode = 'manual'; // manual, ocr
+        let currentMode = 'manual'; 
         let isCloneMode = false;
-        let cloneSourceData = null; // 儲存要被複製的數據樣板
+        let cloneSourceData = null; 
         
-        // OCR 框選變數
         let isDragging = false;
         let startX, startY, endX, endY;
         
-        // 暫存變數
         let editingIndex = -1; 
         let tempCoords = {x:0, y:0};
 
-        // --- 1. 核心邏輯：特殊材積計算 ---
+        // --- 1. 計算公式 ---
         function calculateSpecialVolume(w, d, h) {
-            // 步驟 1: 原始換算
             let rawVal = (w * d * h) / 28317;
-            
-            // 步驟 2: 四捨五入到最近的 10 (實現個位數 <5 捨去, >=5 進位)
-            // Math.round(124 / 10) -> 12 * 10 = 120
-            // Math.round(125 / 10) -> 13 * 10 = 130
             let roundedVal = Math.round(rawVal / 10) * 10;
-            
             return roundedVal;
         }
 
-        // 即時預覽計算 (綁定輸入框)
         function updatePreview() {
             const w = document.getElementById('dim-w').value || 0;
             const d = document.getElementById('dim-d').value || 0;
@@ -233,7 +236,6 @@
         ['dim-w', 'dim-d', 'dim-h'].forEach(id => {
             document.getElementById(id).addEventListener('input', updatePreview);
         });
-
 
         // --- 2. 圖片處理 ---
         function handleImageUpload(e) {
@@ -246,7 +248,6 @@
                     canvas.width = bgImage.width;
                     canvas.height = bgImage.height;
                     isImageLoaded = true;
-                    // 讓畫布寬度適應
                     if(bgImage.width > canvasWrapper.clientWidth) {
                         canvas.style.width = '100%';
                         canvas.style.height = 'auto';
@@ -261,9 +262,9 @@
             reader.readAsDataURL(file);
         }
 
-        // --- 3. 互動與模式控制 ---
+        // --- 3. 模式控制 ---
         function setMode(mode) {
-            if(isCloneMode) stopCloneMode(); // 切換模式時強制停止複製
+            if(isCloneMode) stopCloneMode();
             currentMode = mode;
             document.querySelectorAll('.mode-option').forEach(el => el.classList.remove('active'));
             document.getElementById(`mode-${mode}`).classList.add('active');
@@ -279,34 +280,26 @@
             }
         }
 
-        // --- 4. 複製模式邏輯 (印章功能) ---
+        // --- 4. 複製模式 ---
         function startCloneModeFromModal() {
-            // 從彈窗中取得當前數據作為樣板
             const w = parseFloat(document.getElementById('dim-w').value);
             const d = parseFloat(document.getElementById('dim-d').value);
             const h = parseFloat(document.getElementById('dim-h').value);
             const name = document.getElementById('dim-name').value;
 
             if (isNaN(w) || isNaN(d) || isNaN(h)) {
-                alert("請先輸入有效的尺寸才能開始複製");
+                alert("請先輸入有效的尺寸");
                 return;
             }
 
-            // 如果是新增狀態，先存檔
             if (editingIndex === -1) {
                 saveMarker();
-                // 存檔後 editingIndex 會變回 -1，但 markers 最後一個就是剛存的
                 cloneSourceData = markers[markers.length - 1];
             } else {
-                // 如果是編輯狀態，直接存
                 saveMarker();
-                cloneSourceData = markers[editingIndex]; // 注意 saveMarker 會重置 editingIndex，這裡邏輯要小心
-                // 修正：saveMarker 會把 editingIndex 設為 -1。
-                // 其實可以直接用上面抓到的 w,d,h 建立物件
                 cloneSourceData = { w, d, h, name }; 
             }
             
-            // 啟動複製模式
             isCloneMode = true;
             document.getElementById('clone-status').style.display = 'flex';
             updateCursor();
@@ -319,12 +312,9 @@
             updateCursor();
         }
 
-        // 智慧命名 (自動遞增)
         function incrementName(name) {
-            // 尋找字串末尾的數字
             return name.replace(/(\d+)$/, (match) => {
                 const num = parseInt(match, 10) + 1;
-                // 保持原本的補零格式 (例如 01 -> 02)
                 return num.toString().padStart(match.length, '0');
             });
         }
@@ -334,17 +324,12 @@
             if (!isImageLoaded) return;
             const {x, y} = getCanvasCoordinates(e);
 
-            // A. 複製模式優先處理
+            // A. 複製模式
             if (isCloneMode && cloneSourceData) {
-                // 1. 自動產生新名稱
                 const newName = incrementName(cloneSourceData.name);
-                // 2. 更新樣板名稱以便下次繼續遞增
                 cloneSourceData.name = newName;
-                
-                // 3. 計算材積 (雖然尺寸一樣，還是跑一次公式確保一致)
                 const vol = calculateSpecialVolume(cloneSourceData.w, cloneSourceData.d, cloneSourceData.h);
                 
-                // 4. 直接加入標記
                 markers.push({
                     x: x, y: y,
                     w: cloneSourceData.w,
@@ -357,7 +342,7 @@
                 
                 updateTable();
                 redraw();
-                return; // 結束，不觸發其他操作
+                return;
             }
 
             // B. 點擊現有標記 (編輯)
@@ -367,21 +352,20 @@
                 return;
             }
 
-            // C. 手動新增模式
+            // C. 手動模式
             if (currentMode === 'manual') {
                 tempCoords = {x, y};
                 openModal(-1);
                 return;
             }
 
-            // D. OCR 模式 (開始拖曳)
+            // D. OCR 模式
             if (currentMode === 'ocr') {
                 isDragging = true;
                 startX = x; startY = y;
             }
         });
 
-        // OCR 拖曳視覺效果
         canvas.addEventListener('mousemove', function(e) {
             if (!isDragging || currentMode !== 'ocr') return;
             const {x, y} = getCanvasCoordinates(e);
@@ -394,7 +378,6 @@
             ctx.setLineDash([]);
         });
 
-        // OCR 結束拖曳
         canvas.addEventListener('mouseup', function(e) {
             if (!isDragging) return;
             isDragging = false;
@@ -407,7 +390,6 @@
             performOCR(rectX, rectY, w, h);
         });
 
-        // 座標轉換
         function getCanvasCoordinates(e) {
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
@@ -418,7 +400,6 @@
             };
         }
 
-        // --- 6. OCR 執行 ---
         async function performOCR(x, y, w, h) {
             document.getElementById('loading-overlay').style.display = 'flex';
             const tempCanvas = document.createElement('canvas');
@@ -426,7 +407,7 @@
             tempCanvas.getContext('2d').drawImage(bgImage, x, y, w, h, 0, 0, w, h);
             
             try {
-                const result = await Tesseract.recognize(tempCanvas, 'eng'); // 數字用英文模型即可
+                const result = await Tesseract.recognize(tempCanvas, 'eng');
                 const numbers = result.data.text.match(/\d+/g);
                 document.getElementById('loading-overlay').style.display = 'none';
                 
@@ -434,7 +415,6 @@
                 if (numbers && numbers.length >= 2) {
                     document.getElementById('dim-w').value = numbers[0];
                     document.getElementById('dim-d').value = numbers[1];
-                    // 如果抓到三個數字就填高，沒有就留空
                     if(numbers[2]) document.getElementById('dim-h').value = numbers[2];
                 }
                 updatePreview();
@@ -444,25 +424,24 @@
             }
         }
 
-        // --- 7. 彈窗與數據管理 ---
+        // --- 6. 彈窗與數據管理 ---
         function openModal(index) {
             editingIndex = index;
             modal.style.display = 'flex';
             const btnDelete = document.getElementById('btn-delete');
             const btnClone = document.getElementById('btn-start-clone');
+            const modalTitle = document.getElementById('modal-title');
             
-            // 自動生成名稱預設值
             let nextName = "A-01";
             if (markers.length > 0) {
-                // 嘗試抓取最後一個的名稱並遞增
                 nextName = incrementName(markers[markers.length-1].name);
             }
 
             if (index === -1) {
-                // 新增
+                // 新增模式
+                modalTitle.innerText = "新增倉位資料";
                 btnDelete.style.display = 'none';
                 btnClone.innerText = "儲存並開始複製";
-                // 若不是 OCR 填入的，則清空
                 if (currentMode === 'manual') {
                     document.getElementById('dim-name').value = nextName;
                     document.getElementById('dim-w').value = '';
@@ -472,7 +451,8 @@
                     document.getElementById('dim-name').value = nextName;
                 }
             } else {
-                // 編輯
+                // 編輯模式 (重點修改處)
+                modalTitle.innerText = "修改倉位資料";
                 btnDelete.style.display = 'block';
                 btnClone.innerText = "📋 以此為樣板複製";
                 const m = markers[index];
@@ -502,6 +482,7 @@
 
             const volume = calculateSpecialVolume(w, d, h);
             
+            // 如果是編輯模式，保持座標不變；新增模式則用暫存座標
             const markerData = {
                 x: editingIndex === -1 ? tempCoords.x : markers[editingIndex].x,
                 y: editingIndex === -1 ? tempCoords.y : markers[editingIndex].y,
@@ -510,12 +491,14 @@
             };
 
             if (editingIndex === -1) {
+                // 新增
                 markers.push(markerData);
             } else {
+                // 修改現有資料 (關鍵步驟)
                 markers[editingIndex] = markerData;
             }
 
-            editingIndex = -1; // 重置
+            editingIndex = -1; 
             updateTable();
             redraw();
             closeModal();
@@ -531,8 +514,6 @@
         }
 
         function findClickedMarker(x, y) {
-            // 簡單碰撞檢測，檢測範圍為標籤大小
-            // 這裡假設標籤大約 100x60，倒序檢測
             for (let i = markers.length - 1; i >= 0; i--) {
                 const m = markers[i];
                 if (x >= m.x && x <= m.x + 120 && y >= m.y && y <= m.y + 60) {
@@ -542,7 +523,7 @@
             return -1;
         }
 
-        // --- 8. 繪圖與表格 ---
+        // --- 7. 繪圖與表格 (UI更新) ---
         function redraw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (isImageLoaded) ctx.drawImage(bgImage, 0, 0);
@@ -550,7 +531,6 @@
         }
 
         function drawMarker(m) {
-            const padding = 8;
             const fontSize = 24; 
             ctx.font = `bold ${fontSize}px Microsoft JhengHei`;
             
@@ -559,22 +539,18 @@
             const boxWidth = Math.max(textWidth, nameWidth) + 25;
             const boxHeight = 65;
 
-            // 標籤背景 (半透明黑)
             ctx.fillStyle = "rgba(40, 40, 40, 0.85)";
             ctx.beginPath();
             ctx.roundRect(m.x, m.y, boxWidth, boxHeight, 8);
             ctx.fill();
 
-            // 材積 (大字 黃色)
             ctx.fillStyle = "#f1c40f";
             ctx.fillText(m.text, m.x + 10, m.y + fontSize + 5);
 
-            // 編號 (小字 白色)
             ctx.font = `16px Microsoft JhengHei`;
             ctx.fillStyle = "#ecf0f1";
             ctx.fillText(m.name, m.x + 10, m.y + fontSize + 28);
             
-            // 紅點定位
             ctx.beginPath();
             ctx.arc(m.x, m.y, 5, 0, 2 * Math.PI);
             ctx.fillStyle = "#e74c3c";
@@ -589,25 +565,40 @@
             markers.forEach((m, index) => {
                 total += m.volume;
                 const tr = document.createElement('tr');
+                
+                // 表格列點擊時開啟編輯 (但排除按鈕區域)
+                tr.onclick = (e) => {
+                    // 如果點到的是按鈕本身，不觸發列的 onclick (雖然按鈕有 stopPropagation，但這是雙重保險)
+                    if(e.target.tagName !== 'BUTTON') openModal(index);
+                };
+
                 tr.innerHTML = `
                     <td><strong>${m.name}</strong></td>
                     <td style="font-size:0.85rem; color:#666;">${m.w}x${m.d}x${m.h}</td>
                     <td style="color:#e67e22; font-weight:bold;">${m.volume}</td>
-                    <td><button class="btn-danger" style="padding:2px 6px; font-size:12px;" onclick="removeOne(${index})">X</button></td>
+                    <td class="action-cell">
+                        <button class="btn-edit" onclick="editOne(event, ${index})">✎</button>
+                        <button class="btn-danger" onclick="removeOne(event, ${index})">🗑️</button>
+                    </td>
                 `;
-                tr.onclick = (e) => {
-                    if(e.target.tagName !== 'BUTTON') openModal(index);
-                };
                 tbody.appendChild(tr);
             });
             document.getElementById('totalVolume').innerText = total;
         }
 
-        function removeOne(index) {
-            event.stopPropagation();
-            markers.splice(index, 1);
-            updateTable();
-            redraw();
+        // 專門處理表格內的按鈕事件
+        function editOne(event, index) {
+            event.stopPropagation(); // 防止冒泡
+            openModal(index);
+        }
+
+        function removeOne(event, index) {
+            event.stopPropagation(); // 防止冒泡
+            if(confirm('確定要刪除 ' + markers[index].name + ' 嗎？')) {
+                markers.splice(index, 1);
+                updateTable();
+                redraw();
+            }
         }
 
         function clearAll() {
@@ -618,7 +609,7 @@
             }
         }
 
-        // --- 9. 導出 ---
+        // --- 8. 導出 ---
         function exportImage() {
             if (!isImageLoaded) return;
             const link = document.createElement('a');
