@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧型平面圖材積計算器 (OCR版)</title>
+    <!-- 引入 Tesseract.js 用於文字辨識 -->
+    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
+    <style>
+        body { font-family: "Microsoft JhengHei", Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        
+        h1 { color: #2c3e50; margin-bottom: 5px; }
+        .subtitle { color: #7f8c8d; font-size: 0.9rem; margin-bottom: 20px; }
+        
+        /* 工具列 */
+        .toolbar { 
+            background: white; padding: 15px; border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 15px; 
+            display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+            position: sticky; top: 10px; z-index: 100;
+        }
+        
+        button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95rem; transition: 0.2s; font-weight: bold; }
+        .btn-primary { background-color: #3498db; color: white; }
+        .btn-primary:hover { background-color: #2980b9; }
+        .btn-success { background-color: #27ae60; color: white; }
+        .btn-success:hover { background-color: #219150; }
+        .btn-danger { background-color: #e74c3c; color: white; }
+        .btn-warning { background-color: #f39c12; color: white; }
+        
+        /* 模式切換開關 */
+        .mode-switch { display: flex; align-items: center; background: #eee; padding: 5px; border-radius: 20px; }
+        .mode-option { padding: 5px 15px; border-radius: 15px; cursor: pointer; font-size: 0.9rem; user-select: none; }
+        .mode-option.active { background: #3498db; color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+
+        #file-input { display: none; }
+
+        /* 主要操作區 */
+        .main-container { display: flex; gap: 20px; width: 100%; max-width: 1400px; flex-wrap: wrap; }
+        
+        /* 左側畫布 */
+        .canvas-wrapper {
+            flex: 2;
+            min-width: 600px;
+            position: relative;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            background-color: #fff;
+            background-image: linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee), 
+                              linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee);
+            background-size: 20px 20px;
+            overflow: auto;
+            border: 2px solid #ddd;
+        }
+        canvas { display: block; cursor: crosshair; }
+
+        /* 右側數據列表 */
+        .data-panel {
+            flex: 1;
+            min-width: 300px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
+        th { background: #f8f9fa; position: sticky; top: 0; }
+        tr:hover { background: #f1f1f1; cursor: pointer; }
+        .total-row { font-weight: bold; background: #e8f6f3; }
+
+        /* 讀取遮罩 */
+        #loading-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8); z-index: 2000;
+            justify-content: center; align-items: center; flex-direction: column;
+        }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* 彈出視窗 */
+        #input-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000;
+        }
+        .modal-content { background: white; padding: 25px; border-radius: 8px; width: 320px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; margin-bottom: 4px; font-weight: bold; font-size: 0.9rem; }
+        .form-group input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .modal-footer { display: flex; justify-content: space-between; margin-top: 20px; }
+
+    </style>
+</head>
+<body>
+
+    <h1>📏 智慧型平面圖材積計算器</h1>
+    <p class="subtitle">支援：手動標註 / OCR 框選辨識 / 點擊修改 / 報表導出</p>
+
+    <div class="toolbar">
+        <button class="btn-primary" onclick="document.getElementById('file-input').click()">📁 1. 導入平面圖</button>
+        <input type="file" id="file-input" accept="image/*" onchange="handleImageUpload(event)">
+        
+        <div class="mode-switch">
+            <div class="mode-option active" id="mode-manual" onclick="setMode('manual')">🖐️ 手動點選</div>
+            <div class="mode-option" id="mode-ocr" onclick="setMode('ocr')">🔍 OCR 框選辨識</div>
+        </div>
+
+        <button class="btn-success" onclick="exportImage()">💾 導出圖片</button>
+        <button class="btn-success" onclick="exportCSV()">📊 導出 Excel(CSV)</button>
+        <button class="btn-danger" onclick="clearAll()">🗑️ 全部清除</button>
+    </div>
+
+    <div class="main-container">
+        <!-- 畫布區 -->
+        <div class="canvas-wrapper" id="canvas-container">
+            <canvas id="mainCanvas"></canvas>
+        </div>
+
+        <!-- 數據列表區 -->
+        <div class="data-panel">
+            <h3>📦 材積明細表</h3>
+            <table id="dataTable">
+                <thead>
+                    <tr>
+                        <th>編號</th>
+                        <th>尺寸 (cm)</th>
+                        <th>材積</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <!-- 內容動態生成 -->
+                </tbody>
+                <tfoot>
+                    <tr class="total-row">
+                        <td colspan="2">總計</td>
+                        <td id="totalVolume">0.00</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- 編輯/輸入 彈窗 -->
+    <div id="input-modal">
+        <div class="modal-content">
+            <h3 id="modal-title">倉位標註</h3>
+            <div class="form-group">
+                <label>編號/名稱:</label>
+                <input type="text" id="dim-name" placeholder="例如: A-01">
+            </div>
+            <div class="form-group">
+                <label>寬 (Width):</label>
+                <input type="number" id="dim-w">
+            </div>
+            <div class="form-group">
+                <label>深 (Depth):</label>
+                <input type="number" id="dim-d">
+            </div>
+            <div class="form-group">
+                <label>高 (Height):</label>
+                <input type="number" id="dim-h">
+            </div>
+            <div style="font-size: 0.8rem; color: #666; margin-bottom:10px;">公式: (W*D*H)/28317</div>
+            
+            <div class="modal-footer">
+                <button class="btn-danger" id="btn-delete" style="display:none;" onclick="deleteMarker()">刪除</button>
+                <button class="btn-warning" onclick="closeModal()">取消</button>
+                <button class="btn-success" onclick="saveMarker()">確定儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading 遮罩 -->
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <p id="loading-text">正在辨識文字中...</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const modal = document.getElementById('input-modal');
+        
+        let bgImage = new Image();
+        let markers = []; 
+        let isImageLoaded = false;
+        
+        // 狀態變數
+        let currentMode = 'manual'; // 'manual' or 'ocr'
+        let isDragging = false;
+        let startX, startY, endX, endY;
+        let editingIndex = -1; // -1 表示新增, 其他數字表示編輯陣列索引
+        let tempCoords = {x:0, y:0}; // 新增時的座標
+
+        // 1. 初始化與圖片上傳
+        function handleImageUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                bgImage = new Image();
+                bgImage.onload = function() {
+                    canvas.width = bgImage.width;
+                    canvas.height = bgImage.height;
+                    isImageLoaded = true;
+                    // 讓畫布適應螢幕，但保持內部解析度
+                    fitCanvas();
+                    redraw();
+                }
+                bgImage.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function fitCanvas() {
+            // 簡單的響應式處理
+            const container = document.getElementById('canvas-container');
+            if(bgImage.width > container.clientWidth) {
+                canvas.style.width = '100%';
+                canvas.style.height = 'auto';
+            } else {
+                canvas.style.width = '';
+                canvas.style.height = '';
+            }
+        }
+
+        // 2. 模式切換
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-option').forEach(el => el.classList.remove('active'));
+            document.getElementById(`mode-${mode}`).classList.add('active');
+            
+            // 改變游標樣式
+            canvas.style.cursor = mode === 'ocr' ? 'crosshair' : 'default';
+        }
+
+        // 3. Canvas 滑鼠事件處理 (核心邏輯)
+        canvas.addEventListener('mousedown', function(e) {
+            if (!isImageLoaded) return;
+            const {x, y} = getCanvasCoordinates(e);
+
+            // 檢查是否點擊到現有標記 (優先權最高)
+            const clickedIndex = findClickedMarker(x, y);
+            if (clickedIndex !== -1) {
+                openModal(clickedIndex);
+                return;
+            }
+
+            // 如果是手動模式，直接點擊新增
+            if (currentMode === 'manual') {
+                tempCoords = {x, y};
+                openModal(-1); // -1 代表新增
+                return;
+            }
+
+            // 如果是 OCR 模式，開始框選
+            if (currentMode === 'ocr') {
+                isDragging = true;
+                startX = x;
+                startY = y;
+            }
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (!isDragging || currentMode !== 'ocr') return;
+            const {x, y} = getCanvasCoordinates(e);
+            endX = x;
+            endY = y;
+            redraw(); // 重畫以顯示選框
+            
+            // 畫出紅色選框
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([6, 3]);
+            ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+            ctx.setLineDash([]);
+        });
+
+        canvas.addEventListener('mouseup', function(e) {
+            if (!isDragging) return;
+            isDragging = false;
+            
+            // 計算選取區域
+            const w = Math.abs(endX - startX);
+            const h = Math.abs(endY - startY);
+            
+            // 防止誤觸微小移動
+            if (w < 10 || h < 10) return;
+
+            // 定義最終選取區左上角
+            const rectX = Math.min(startX, endX);
+            const rectY = Math.min(startY, endY);
+            
+            tempCoords = {x: rectX, y: rectY};
+            
+            // 執行 OCR
+            performOCR(rectX, rectY, w, h);
+        });
+
+        // 輔助：取得在 Canvas 上的真實座標
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        // 4. OCR 辨識邏輯
+        async function performOCR(x, y, w, h) {
+            showLoading(true);
+
+            // 創建一個臨時 canvas 來裁切圖片
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            const tCtx = tempCanvas.getContext('2d');
+            
+            // 從原圖裁切
+            tCtx.drawImage(bgImage, x, y, w, h, 0, 0, w, h);
+            
+            // 圖像增強 (簡單二值化，提高 OCR 準確率) - 非必須但建議
+            // 這裡為了簡化直接傳送圖像
+            
+            try {
+                // 使用 Tesseract.js
+                const result = await Tesseract.recognize(tempCanvas, 'eng');
+                const text = result.data.text;
+                
+                // 分析文字抓取數字
+                // 使用 Regex 抓取所有數字
+                const numbers = text.match(/\d+/g);
+                
+                let detectedW = '', detectedD = '', detectedH = '';
+                
+                if (numbers && numbers.length >= 3) {
+                    detectedW = numbers[0];
+                    detectedD = numbers[1];
+                    detectedH = numbers[2];
+                } else if (numbers && numbers.length === 2) {
+                    detectedW = numbers[0];
+                    detectedD = numbers[1];
+                }
+
+                showLoading(false);
+                
+                // 開啟彈窗並預填資料
+                openModal(-1); // 新增模式
+                document.getElementById('dim-w').value = detectedW;
+                document.getElementById('dim-d').value = detectedD;
+                document.getElementById('dim-h').value = detectedH;
+                
+                // 自動生成名稱
+                document.getElementById('dim-name').value = `Pos-${markers.length + 1}`;
+
+            } catch (err) {
+                showLoading(false);
+                alert("OCR 辨識失敗，請手動輸入");
+                openModal(-1);
+            }
+        }
+
+        // 5. 標記管理 (CRUD)
+        function openModal(index) {
+            editingIndex = index;
+            modal.style.display = 'flex';
+            const deleteBtn = document.getElementById('btn-delete');
+            const title = document.getElementById('modal-title');
+
+            if (index === -1) {
+                // 新增模式
+                title.innerText = "新增倉位標註";
+                deleteBtn.style.display = 'none';
+                // 如果不是 OCR 自動填入的，清空
+                if (currentMode === 'manual') {
+                    document.getElementById('dim-name').value = `A-${markers.length + 1}`;
+                    document.getElementById('dim-w').value = '';
+                    document.getElementById('dim-d').value = '';
+                    document.getElementById('dim-h').value = '';
+                }
+            } else {
+                // 編輯模式
+                title.innerText = "修改倉位標註";
+                deleteBtn.style.display = 'block';
+                const m = markers[index];
+                document.getElementById('dim-name').value = m.name;
+                document.getElementById('dim-w').value = m.w;
+                document.getElementById('dim-d').value = m.d;
+                document.getElementById('dim-h').value = m.h;
+            }
+            
+            // 自動聚焦
+            document.getElementById('dim-w').focus();
+        }
+
+        function closeModal() {
+            modal.style.display = 'none';
+            redraw(); // 清除可能殘留的選框
+        }
+
+        function saveMarker() {
+            const w = parseFloat(document.getElementById('dim-w').value);
+            const d = parseFloat(document.getElementById('dim-d').value);
+            const h = parseFloat(document.getElementById('dim-h').value);
+            const name = document.getElementById('dim-name').value || '未命名';
+
+            if (isNaN(w) || isNaN(d) || isNaN(h)) {
+                alert("請輸入完整的長寬高數字");
+                return;
+            }
+
+            const volume = ((w * d * h) / 28317).toFixed(2);
+            
+            const markerData = {
+                x: editingIndex === -1 ? tempCoords.x : markers[editingIndex].x,
+                y: editingIndex === -1 ? tempCoords.y : markers[editingIndex].y,
+                w: w, d: d, h: h,
+                name: name,
+                volume: volume,
+                text: `${volume} 材`
+            };
+
+            if (editingIndex === -1) {
+                markers.push(markerData);
+            } else {
+                markers[editingIndex] = markerData;
+            }
+
+            updateTable();
+            redraw();
+            closeModal();
+        }
+
+        function deleteMarker() {
+            if (editingIndex !== -1) {
+                if(confirm("確定要刪除此標記嗎？")) {
+                    markers.splice(editingIndex, 1);
+                    updateTable();
+                    redraw();
+                    closeModal();
+                }
+            }
+        }
+
+        function findClickedMarker(x, y) {
+            // 倒序檢查，確保點到最上層的標籤
+            for (let i = markers.length - 1; i >= 0; i--) {
+                const m = markers[i];
+                // 簡單的碰撞檢測 (假設標籤寬高約為 120x60，可視情況調整)
+                // 這裡我們直接計算文字寬度會更精準，但簡化版用固定區域檢測
+                if (x >= m.x && x <= m.x + 120 && y >= m.y && y <= m.y + 60) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        // 6. 繪圖與表格更新
+        function redraw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (isImageLoaded) {
+                ctx.drawImage(bgImage, 0, 0);
+            }
+            markers.forEach(drawMarker);
+        }
+
+        function drawMarker(m) {
+            const padding = 8;
+            const fontSize = 24; 
+            ctx.font = `bold ${fontSize}px Microsoft JhengHei`;
+            
+            const textWidth = ctx.measureText(m.text).width;
+            const boxWidth = Math.max(textWidth + 20, 100);
+            const boxHeight = 60;
+
+            // 畫標籤底色
+            ctx.fillStyle = "rgba(44, 62, 80, 0.85)";
+            ctx.beginPath();
+            ctx.roundRect(m.x, m.y, boxWidth, boxHeight, 5);
+            ctx.fill();
+
+            // 畫材積 (醒目)
+            ctx.fillStyle = "#f1c40f";
+            ctx.fillText(m.text, m.x + padding, m.y + fontSize + 5);
+
+            // 畫尺寸 (小字)
+            ctx.fillStyle = "#ecf0f1";
+            ctx.font = `14px Microsoft JhengHei`;
+            ctx.fillText(`${m.name} (${m.w}x${m.d}x${m.h})`, m.x + padding, m.y + fontSize + 22);
+            
+            // 畫紅點
+            ctx.beginPath();
+            ctx.arc(m.x, m.y, 4, 0, 2 * Math.PI);
+            ctx.fillStyle = "#e74c3c";
+            ctx.fill();
+        }
+
+        function updateTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            let total = 0;
+
+            markers.forEach((m, index) => {
+                total += parseFloat(m.volume);
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${m.name}</td>
+                    <td>${m.w} x ${m.d} x ${m.h}</td>
+                    <td><strong>${m.volume}</strong></td>
+                    <td><button style="padding:2px 8px; font-size:0.8rem;" onclick="deleteFromTable(${index})">❌</button></td>
+                `;
+                // 點擊表格也能編輯
+                tr.onclick = (e) => {
+                    if(e.target.tagName !== 'BUTTON') openModal(index);
+                };
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('totalVolume').innerText = total.toFixed(2);
+        }
+
+        function deleteFromTable(index) {
+            event.stopPropagation();
+            markers.splice(index, 1);
+            updateTable();
+            redraw();
+        }
+
+        function clearAll() {
+            if(confirm("確定清空所有數據？")) {
+                markers = [];
+                updateTable();
+                redraw();
+            }
+        }
+
+        // 7. 導出功能
+        function exportImage() {
+            if (!isImageLoaded) return;
+            const link = document.createElement('a');
+            link.download = '材積標註圖.png';
+            link.href = canvas.toDataURL("image/png");
+            link.click();
+        }
+
+        function exportCSV() {
+            if (markers.length === 0) {
+                alert("沒有資料可導出");
+                return;
+            }
+            // 製作 CSV 內容 (加上 BOM 以解決 Excel 中文亂碼)
+            let csvContent = "\uFEFF編號,寬(cm),深(cm),高(cm),材積(cuft)\n";
+            markers.forEach(m => {
+                csvContent += `${m.name},${m.w},${m.d},${m.h},${m.volume}\n`;
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", "倉位材積表.csv");
+            link.click();
+        }
+
+        // UI 輔助
+        function showLoading(show) {
+            document.getElementById('loading-overlay').style.display = show ? 'flex' : 'none';
+        }
+
+        // 監聽鍵盤 Enter
+        modal.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') saveMarker();
+        });
+
+    </script>
+</body>
+</html>
